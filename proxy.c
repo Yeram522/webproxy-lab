@@ -10,7 +10,7 @@ void parse_uri(char *uri, char *hostname, char *port, char *path);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
 void forward_request(rio_t *client_rio, int serverfd, char *method, char *path, char *version, char *hostname);
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv) { //echoclient 참고
     int listenfd, connfd;
     char hostname[MAXLINE], port[MAXLINE];
     socklen_t clientlen;
@@ -24,10 +24,11 @@ int main(int argc, char **argv) {
     listenfd = Open_listenfd(argv[1]);
     printf("Proxy server is running on port %s\n", argv[1]);
 
-    while (1) {
+    while (1) { //1. client로부터 요청 대기
         clientlen = sizeof(clientaddr);
         connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
-        Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0);
+        
+        Getnameinfo((SA *) &clientaddr, clientlen, hostname, MAXLINE, port, MAXLINE, 0); // address, hostname, port
         printf("Accepted connection from (%s, %s)\n", hostname, port);
         handle_client(connfd);
         Close(connfd);
@@ -35,6 +36,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 
+//2. 주소를 파싱하고 tiny서버로 보낸다.
 void handle_client(int connfd) {
     char buf[MAXLINE], method[MAXLINE], uri[MAXLINE], version[MAXLINE];
     char hostname[MAXLINE], port[MAXLINE], path[MAXLINE];
@@ -48,26 +50,31 @@ void handle_client(int connfd) {
     printf("%s", buf);
     sscanf(buf, "%s %s %s", method, uri, version);
 
-    if (strcasecmp(method, "GET")) {
+    if (strcasecmp(method, "GET")) {// exception
         clienterror(connfd, method, "501", "Not Implemented", "Proxy does not implement this method");
         return;
     }
 
-    parse_uri(uri, hostname, port, path);
+    if (strlen(hostname) == 0) {// exception
+            clienterror(connfd, uri, "400", "Bad Request", "Host information is missing");
+            return;
+    }
 
-    int serverfd = Open_clientfd(hostname, port);
-    if (serverfd < 0) {
+    parse_uri(uri, hostname, port, path); //2-1. address pharse
+
+    int serverfd = Open_clientfd(hostname, port); //2-2. open client socket
+    if (serverfd < 0) {// exception
         clienterror(connfd, uri, "502", "Bad Gateway", "Cannot connect to server");
         return;
     }
 
-    Rio_readinitb(&server_rio, serverfd);
+    Rio_readinitb(&server_rio, serverfd); //2-3. inint buffer
 
-    forward_request(&client_rio, serverfd, method, path, version, hostname);
+    forward_request(&client_rio, serverfd, method, path, version, hostname);//2-4. request to tiny server
 
     // Forward response to client
     size_t n;
-    while ((n = Rio_readlineb(&server_rio, buf, MAXLINE)) != 0) {
+    while ((n = Rio_readlineb(&server_rio, buf, MAXLINE)) != 0) { // 2-5. read server answer and write response to client
         Rio_writen(connfd, buf, n);
     }
 
@@ -76,22 +83,22 @@ void handle_client(int connfd) {
 
 void parse_uri(char *uri, char *hostname, char *port, char *path) {
     char *hoststart = strstr(uri, "//");
-    if (hoststart == NULL) {
+    if (hoststart == NULL) { //http:// pass
         hoststart = uri;
     } else {
         hoststart += 2;
     }
 
-    char *hostend = strchr(hoststart, '/');
+    char *hostend = strchr(hoststart, '/'); // host parse
     if (hostend == NULL) {
-        strcpy(path, "/");
+        strcpy(path, "/"); 
         hostend = hoststart + strlen(hoststart);
     } else {
         strcpy(path, hostend);
         *hostend = '\0';
     }
 
-    char *portstart = strchr(hoststart, ':');
+    char *portstart = strchr(hoststart, ':'); // port parse
     if (portstart == NULL) {
         strcpy(port, "80");  // Default HTTP port
     } else {
@@ -102,6 +109,7 @@ void parse_uri(char *uri, char *hostname, char *port, char *path) {
     strcpy(hostname, hoststart);
 }
 
+//tiny 구현 참고
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg) {
     char buf[MAXLINE], body[MAXBUF];
 
@@ -122,6 +130,7 @@ void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longms
     Rio_writen(fd, body, strlen(body));
 }
 
+//tiny 구현 참고
 void forward_request(rio_t *client_rio, int serverfd, char *method, char *path, char *version, char *hostname) {
     char buf[MAXLINE];
 
